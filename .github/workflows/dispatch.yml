@@ -1,0 +1,61 @@
+name: aux-dispatch
+
+# The single tenant-facing reusable workflow.
+#
+# Tenants install one 5-line caller workflow that delegates to this. All future
+# capability changes (new stage kinds, new runtimes, new gateway features) ship
+# inside this repo and are picked up by tenants via the @v1 moving major tag —
+# no further tenant-side PR is ever required.
+
+on:
+  workflow_call:
+    inputs:
+      payload:
+        description: JSON-serialized client_payload from the tenant repository_dispatch event.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout aux-hq/adapters
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: aux-hq/adapters
+          ref: ${{ github.workflow_sha }}
+          path: adapters
+
+      - name: Parse wakeup
+        env:
+          AUX_PAYLOAD: ${{ inputs.payload }}
+        run: ./adapters/shared/parse-wakeup.sh
+
+      - name: Fetch dispatch
+        run: ./adapters/shared/fetch-dispatch.sh
+
+      - name: Dispatch by kind
+        run: |
+          set -euo pipefail
+          case "$AUX_KIND" in
+            agent)
+              ./adapters/kinds/agent.sh
+              ;;
+            *)
+              jq -nc \
+                --arg outcome error \
+                --arg reason "unknown kind" \
+                --arg detail "Adapter does not support kind '$AUX_KIND'. Supported: agent." \
+                '{outcome: $outcome, reason: $reason, detail: $detail}' \
+                >"${RUNNER_TEMP}/aux-outcome.json"
+              echo "dispatch: unsupported kind '$AUX_KIND'" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Post outcome
+        if: always()
+        run: ./adapters/shared/post-outcome.sh

@@ -1,0 +1,174 @@
+name: integration-test
+
+# Exercises the full dispatch pipeline (parse-wakeup → fetch-dispatch →
+# kinds/agent.sh → runtimes/claude-code/* → post-outcome) against an in-job
+# HTTP stub for the Aux dispatch and outcome endpoints, and a PATH-shadowed
+# `claude` binary that simulates each outcome variant.
+#
+# Reusable workflow_call workflows can't share localhost across jobs, so this
+# replicates dispatch.yml's steps inline rather than calling it via `uses:`.
+# dispatch.yml's syntax is covered by the actionlint job in ci.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        case:
+          - name: success
+            kind: agent
+            runtime: claude-code
+            fake-claude: success
+            expected-outcome: success
+          - name: fail
+            kind: agent
+            runtime: claude-code
+            fake-claude: fail
+            expected-outcome: fail
+          - name: error
+            kind: agent
+            runtime: claude-code
+            fake-claude: error
+            expected-outcome: error
+          - name: unknown-runtime
+            kind: agent
+            runtime: this-runtime-does-not-exist
+            fake-claude: success
+            expected-outcome: error
+    env:
+      AUX_OUTCOME_FILE: ${{ github.workspace }}/tmp/aux-outcome.json
+      AUX_STDERR_FILE: ${{ github.workspace }}/tmp/aux-stderr.log
+      FAKE_CLAUDE_OUTCOME: ${{ matrix.case.fake-claude }}
+      # Fake credential so invoke.sh proceeds past the credential check.
+      # The fake claude binary on PATH never actually contacts Anthropic.
+      ANTHROPIC_API_KEY: fake-key-for-integration-test
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Prepare temp dir
+        run: mkdir -p tmp
+
+      - name: Build dispatch payload (stub response)
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg kind '${{ matrix.case.kind }}' \
+            --arg runtime '${{ matrix.case.runtime }}' \
+            '{
+              kind: $kind,
+              runtime: $runtime,
+              prompt: "integration test prompt",
+              model: "claude-sonnet-4-5",
+              maxTurns: 3,
+              gatewayUrl: "http://127.0.0.1:8765/gateway",
+              gatewayAuthority: ["echo"],
+              runtimeTools: ["Read"],
+              cliCommands: [],
+              stageTimeout: "00:30:00"
+            }' > tmp/dispatch.json
+
+      - name: Start stub server
+        run: |
+          set -euo pipefail
+          python3 tests/stub-server.py \
+            --port 8765 \
+            --dispatch-file tmp/dispatch.json \
+            --record-file tmp/record.jsonl &
+          echo "STUB_PID=$!" >>"$GITHUB_ENV"
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS -H "Authorization: Bearer probe" \
+                http://127.0.0.1:8765/dispatch -o /dev/null; then
+              echo "stub ready"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "stub never became ready" >&2
+          exit 1
+
+      - name: Install fake claude on PATH
+        run: |
+          set -euo pipefail
+          mkdir -p tmp/bin
+          install -m 0755 tests/fake-claude.sh tmp/bin/claude
+          echo "$PWD/tmp/bin" >>"$GITHUB_PATH"
+
+      - name: Build wakeup payload and seed env
+        run: |
+          set -euo pipefail
+          {
+            echo "AUX_PAYLOAD<<__AUX_EOF__"
+            jq -n \
+              '{
+                aux_stage_run_id: "stage-run-test",
+                aux_token: "test-token",
+                aux_dispatch_url: "http://127.0.0.1:8765/dispatch",
+                aux_callback_url: "http://127.0.0.1:8765/result",
+                aux_gateway_url: "http://127.0.0.1:8765/gateway"
+              }'
+            echo "__AUX_EOF__"
+          } >>"$GITHUB_ENV"
+
+      - name: Parse wakeup
+        run: ./shared/parse-wakeup.sh
+
+      - name: Fetch dispatch
+        run: ./shared/fetch-dispatch.sh
+
+      - name: Dispatch by kind
+        id: kind
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          case "$AUX_KIND" in
+            agent)
+              ./kinds/agent.sh
+              ;;
+            *)
+              jq -nc \
+                --arg outcome error \
+                --arg reason "unknown kind" \
+                --arg detail "Adapter does not support kind '$AUX_KIND'." \
+                '{outcome: $outcome, reason: $reason, detail: $detail}' \
+                >"$AUX_OUTCOME_FILE"
+              exit 1
+              ;;
+          esac
+
+      - name: Post outcome
+        if: always()
+        run: ./shared/post-outcome.sh
+
+      - name: Verify recorded outcome
+        run: |
+          set -euo pipefail
+          if [[ ! -s tmp/record.jsonl ]]; then
+            echo "no outcome recorded by stub server" >&2
+            exit 1
+          fi
+          recorded=$(head -n 1 tmp/record.jsonl)
+          got=$(jq -r .outcome <<<"$recorded")
+          expected="${{ matrix.case.expected-outcome }}"
+          echo "recorded: $recorded"
+          echo "expected outcome: $expected"
+          echo "got outcome: $got"
+          if [[ "$got" != "$expected" ]]; then
+            echo "outcome mismatch" >&2
+            exit 1
+          fi
+
+      - name: Stop stub server
+        if: always()
+        run: |
+          if [[ -n "${STUB_PID:-}" ]]; then
+            kill "$STUB_PID" 2>/dev/null || true
+          fi
