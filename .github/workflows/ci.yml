@@ -32,3 +32,27 @@ jobs:
           sudo install -m 0755 /tmp/actionlint /usr/local/bin/actionlint
       - name: Run actionlint
         run: actionlint -color
+
+  dispatch-checkout-ref:
+    # dispatch.yml's "Checkout aux-hq/adapters" step must use `ref: v1`, not
+    # `github.workflow_sha`. In a reusable workflow `github.workflow_sha`
+    # resolves to the caller's SHA — on a tenant repo that SHA doesn't exist
+    # on aux-hq/adapters and the checkout fails outright. See aux#412.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Assert dispatch.yml pins ref to v1
+        run: |
+          set -euo pipefail
+          file=.github/workflows/dispatch.yml
+          # Strip full-line comments before checking so the rule isn't tripped
+          # by the explanatory comment in dispatch.yml itself.
+          non_comment=$(grep -vE '^[[:space:]]*#' "$file" || true)
+          if grep -nE 'github\.workflow_sha' <<<"$non_comment"; then
+            echo "::error file=$file::dispatch.yml must not use github.workflow_sha — it resolves to the caller's SHA in reusable-workflow context. Use 'ref: v1'." >&2
+            exit 1
+          fi
+          if ! grep -nE '^[[:space:]]+ref:[[:space:]]+v1[[:space:]]*$' <<<"$non_comment" >/dev/null; then
+            echo "::error file=$file::dispatch.yml's Checkout step must use 'ref: v1' to fetch the scripts at the major tag tenants pin." >&2
+            exit 1
+          fi
