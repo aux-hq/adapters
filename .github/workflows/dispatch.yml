@@ -22,11 +22,18 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     steps:
+      # Checks out the scripts this workflow invokes. The ref MUST be the major
+      # tag (`v1`), NOT `${{ github.workflow_sha }}`: in a reusable workflow,
+      # `github.workflow_sha` resolves to the *caller's* workflow file SHA,
+      # which is on the tenant's runtime repo and not on aux-hq/adapters at
+      # all. There is no first-class context value for "the SHA the reusable
+      # workflow was loaded at"; `v1` is what tenants pin and is the right
+      # contract here. ci.yml enforces this to prevent regressions.
       - name: Checkout aux-hq/adapters
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: aux-hq/adapters
-          ref: ${{ github.workflow_sha }}
+          ref: v1
           path: adapters
 
       - name: Parse wakeup
