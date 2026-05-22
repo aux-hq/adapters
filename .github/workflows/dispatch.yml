@@ -45,6 +45,9 @@ jobs:
         run: ./adapters/shared/fetch-dispatch.sh
 
       - name: Dispatch by kind
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -euo pipefail
           case "$AUX_KIND" in
