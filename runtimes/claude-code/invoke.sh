@@ -91,7 +91,29 @@ if [[ "$exit_code" -eq 0 ]] && jq -e . <"$stdout_file" >/dev/null 2>&1; then
     exit 0
   fi
 
-  jq -nc --arg outcome success '{outcome: $outcome}' >"$outcome_file"
+  # Review stages signal their verdict with an `AUX_VERDICT: approved|rejected`
+  # line in the final message; rejection maps to the `rejected` outcome so Aux
+  # can send work back to the producing stage. Stages that emit no verdict (plan,
+  # compose) fall through to success, so this stays backward-compatible.
+  verdict_line=$(jq -r '.result // empty' <"$stdout_file" \
+    | grep -ioE 'AUX_VERDICT:[[:space:]]*(approved|rejected)' | tail -n1 || true)
+  if printf '%s' "$verdict_line" | grep -qi 'rejected'; then
+    reason=$(jq -r '.result // empty' <"$stdout_file" \
+      | grep -ioE 'AUX_REASON:[[:space:]]*.+' | tail -n1 \
+      | sed -E 's/^[^:]*:[[:space:]]*//' || true)
+    jq -nc \
+      --arg outcome rejected \
+      --arg reason "${reason:-Review rejected the prior stage output.}" \
+      '{outcome: $outcome, reason: $reason}' >"$outcome_file"
+    echo "invoke: agent returned review verdict: rejected"
+    exit 0
+  fi
+
+  # The agent's final message is the stage's output — Aux threads it into the next
+  # stage's prompt (e.g. the plan feeds plan-review). Carried back verbatim; Aux caps it.
+  output=$(jq -r '.result // ""' <"$stdout_file")
+  jq -nc --arg outcome success --arg output "$output" \
+    '{outcome: $outcome, output: $output}' >"$outcome_file"
   echo "invoke: agent succeeded"
   exit 0
 fi
