@@ -70,12 +70,17 @@ if [[ -n "$allowed" ]]; then
   args+=(--allowedTools "$allowed")
 fi
 
-# AUX_CLAUDE_DEBUG=true: enable Claude Code's --debug + Anthropic SDK debug, and
-# tee stderr/stdout to the GHA log so the agent's tool calls and reasoning are
-# visible in real time. Without it, both streams go only to files that are
-# silently discarded on the success path.
+# AUX_CLAUDE_DEBUG=true: enable Claude Code's --debug and tee stderr/stdout to
+# the GHA log so the agent's tool calls and reasoning are visible in real time.
+# Without it, both streams go only to files that are silently discarded on the
+# success path.
+#
+# Do NOT also set ANTHROPIC_LOG=debug — the Anthropic SDK writes its debug
+# stream to stdout via console.log, which corrupts the JSON envelope claude
+# produces under --print --output-format json. The wrapper then reads
+# stdout_file, fails jq -e ., and reports the run as `error` even though the
+# agent succeeded. Claude's own --debug writes to stderr and is sufficient.
 if [[ "${AUX_CLAUDE_DEBUG:-}" == "true" ]]; then
-  export ANTHROPIC_LOG=debug
   args+=(--debug "api,tools")
 fi
 
