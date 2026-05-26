@@ -87,7 +87,10 @@ if [[ "$exit_code" -eq 0 ]] && jq -e . <"$stdout_file" >/dev/null 2>&1; then
       --arg detail "$result_text" \
       '{outcome: $outcome, reason: $reason, detail: $detail}' \
       >"$outcome_file"
-    echo "invoke: agent gave up (stop_reason=${stop_reason:-unknown})"
+    echo "invoke: agent gave up (stop_reason=${stop_reason:-unknown})" >&2
+    echo "--- agent final message (tail) ---" >&2
+    printf '%s\n' "$result_text" >&2
+    echo "---" >&2
     exit 0
   fi
 
@@ -126,4 +129,7 @@ jq -nc \
   '{outcome: $outcome, reason: $reason, detail: $detail}' \
   >"$outcome_file"
 echo "invoke: claude exit_code=$exit_code" >&2
+echo "--- claude stderr (tail) ---" >&2
+printf '%s\n' "$detail" >&2
+echo "---" >&2
 exit "$exit_code"
