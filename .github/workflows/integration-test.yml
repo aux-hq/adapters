@@ -44,6 +44,21 @@ jobs:
             runtime: this-runtime-does-not-exist
             fake-claude: success
             expected-outcome: error
+          - name: script-success
+            kind: script
+            command: "true"
+            overrides: "{}"
+            expected-outcome: success
+          - name: script-fail
+            kind: script
+            command: "false"
+            overrides: "{}"
+            expected-outcome: fail
+          - name: script-override-error
+            kind: script
+            command: "exit 7"
+            overrides: '{"7": "Error"}'
+            expected-outcome: error
     env:
       AUX_OUTCOME_FILE: ${{ github.workspace }}/tmp/aux-outcome.json
       AUX_STDERR_FILE: ${{ github.workspace }}/tmp/aux-stderr.log
@@ -58,23 +73,44 @@ jobs:
         run: mkdir -p tmp
 
       - name: Build dispatch payload (stub response)
+        env:
+          CASE_KIND: ${{ matrix.case.kind }}
+          CASE_RUNTIME: ${{ matrix.case.runtime }}
+          CASE_COMMAND: ${{ matrix.case.command }}
+          CASE_OVERRIDES: ${{ matrix.case.overrides }}
         run: |
           set -euo pipefail
-          jq -n \
-            --arg kind '${{ matrix.case.kind }}' \
-            --arg runtime '${{ matrix.case.runtime }}' \
-            '{
-              kind: $kind,
-              runtime: $runtime,
-              prompt: "integration test prompt",
-              model: "claude-sonnet-4-5",
-              maxTurns: 3,
-              gatewayUrl: "http://127.0.0.1:8765/gateway",
-              gatewayAuthority: ["echo"],
-              runtimeTools: ["Read"],
-              cliCommands: [],
-              stageTimeout: "00:30:00"
-            }' > tmp/dispatch.json
+          if [[ "$CASE_KIND" == "script" ]]; then
+            jq -n \
+              --arg command "$CASE_COMMAND" \
+              --argjson overrides "$CASE_OVERRIDES" \
+              '{
+                kind: "script",
+                command: $command,
+                timeout: "00:01:00",
+                exitCodeSemantics: { overrides: $overrides },
+                gatewayUrl: "http://127.0.0.1:8765/gateway",
+                gatewayAuthority: [],
+                cliCommands: ["bash"],
+                stageTimeout: "00:01:00"
+              }' > tmp/dispatch.json
+          else
+            jq -n \
+              --arg kind "$CASE_KIND" \
+              --arg runtime "$CASE_RUNTIME" \
+              '{
+                kind: $kind,
+                runtime: $runtime,
+                prompt: "integration test prompt",
+                model: "claude-sonnet-4-5",
+                maxTurns: 3,
+                gatewayUrl: "http://127.0.0.1:8765/gateway",
+                gatewayAuthority: ["echo"],
+                runtimeTools: ["Read"],
+                cliCommands: [],
+                stageTimeout: "00:30:00"
+              }' > tmp/dispatch.json
+          fi
 
       - name: Start stub server
         run: |
@@ -132,6 +168,9 @@ jobs:
           case "$AUX_KIND" in
             agent)
               ./kinds/agent.sh
+              ;;
+            script)
+              ./kinds/script.sh
               ;;
             *)
               jq -nc \
