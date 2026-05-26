@@ -70,9 +70,28 @@ if [[ -n "$allowed" ]]; then
   args+=(--allowedTools "$allowed")
 fi
 
+# AUX_CLAUDE_DEBUG=true: enable Claude Code's --debug + Anthropic SDK debug, and
+# tee stderr/stdout to the GHA log so the agent's tool calls and reasoning are
+# visible in real time. Without it, both streams go only to files that are
+# silently discarded on the success path.
+if [[ "${AUX_CLAUDE_DEBUG:-}" == "true" ]]; then
+  export ANTHROPIC_LOG=debug
+  args+=(--debug "api,tools")
+fi
+
 set +e
-claude "${args[@]}" -- "$prompt" >"$stdout_file" 2>"$stderr_file"
-exit_code=$?
+if [[ "${AUX_CLAUDE_DEBUG:-}" == "true" ]]; then
+  claude "${args[@]}" -- "$prompt" \
+    > >(tee "$stdout_file") \
+    2> >(tee "$stderr_file" >&2)
+  exit_code=$?
+  # Process-substitution tees don't auto-join; wait so the files are flushed
+  # before we parse them below.
+  wait
+else
+  claude "${args[@]}" -- "$prompt" >"$stdout_file" 2>"$stderr_file"
+  exit_code=$?
+fi
 set -e
 
 if [[ "$exit_code" -eq 0 ]] && jq -e . <"$stdout_file" >/dev/null 2>&1; then

@@ -48,6 +48,9 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Resolved from the caller repo's Actions variables (e.g. aux-hq/aux-runtime).
+          # When "true", invoke.sh enables Claude Code --debug and streams logs to the GHA log.
+          AUX_CLAUDE_DEBUG: ${{ vars.AUX_CLAUDE_DEBUG }}
         run: |
           set -euo pipefail
           case "$AUX_KIND" in
