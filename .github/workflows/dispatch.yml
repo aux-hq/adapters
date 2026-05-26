@@ -57,11 +57,14 @@ jobs:
             agent)
               ./adapters/kinds/agent.sh
               ;;
+            script)
+              ./adapters/kinds/script.sh
+              ;;
             *)
               jq -nc \
                 --arg outcome error \
                 --arg reason "unknown kind" \
-                --arg detail "Adapter does not support kind '$AUX_KIND'. Supported: agent." \
+                --arg detail "Adapter does not support kind '$AUX_KIND'. Supported: agent, script." \
                 '{outcome: $outcome, reason: $reason, detail: $detail}' \
                 >"${RUNNER_TEMP}/aux-outcome.json"
               echo "dispatch: unsupported kind '$AUX_KIND'" >&2
