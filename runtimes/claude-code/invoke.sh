@@ -45,7 +45,13 @@ allowed=""
 gateway_tools=$(jq -r '(.gatewayAuthority // []) | .[]' <"$dispatch_file")
 while IFS= read -r tool; do
   [[ -z "$tool" ]] && continue
-  allowed+="mcp__aux__${tool},"
+  # Claude Code names MCP tools as `mcp__<server>__<tool>` and replaces dots in
+  # the tool name with underscores when matching the --allowedTools allowlist,
+  # so we have to do the same here. Without this, `github.submit_patch` in the
+  # gateway authority arrives at the agent as `mcp__aux__github_submit_patch`
+  # but our allowlist entry is `mcp__aux__github.submit_patch`, and the tool
+  # call is silently denied.
+  allowed+="mcp__aux__${tool//./_},"
 done <<<"$gateway_tools"
 
 runtime_tools=$(jq -r '(.runtimeTools // []) | .[]' <"$dispatch_file")

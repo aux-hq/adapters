@@ -19,6 +19,17 @@ jobs:
           mapfile -t files < <(find shared kinds runtimes tests -type f -name '*.sh')
           shellcheck -x "${files[@]}"
 
+  allowed-tools-naming:
+    # invoke.sh must translate dotted gateway tool names (e.g.
+    # `github.submit_patch`) into the underscore form Claude Code uses to
+    # match `--allowedTools` entries (`mcp__aux__github_submit_patch`).
+    # Without it the agent silently denies its own gateway tool calls.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Run test
+        run: ./tests/test-allowed-tools-naming.sh
+
   actionlint:
     runs-on: ubuntu-latest
     steps:
